@@ -23,7 +23,7 @@
 
   // Save bytes in the minified (but not gzipped) version:
   var ArrayProto = Array.prototype, ObjProto = Object.prototype;
-
+    // 获取原生方法，并给与别名方便调用
   // Create quick reference variables for speed access to core prototypes.
   var slice                 = ArrayProto.slice,
       unshift               = ArrayProto.unshift,
@@ -63,6 +63,13 @@
   // Handles objects implementing forEach, arrays, and raw objects.
   // Delegates to JavaScript 1.6's native forEach if available.
   var each = _.forEach = function(obj, iterator, context) {
+      // 请思考这个try---catch的结构设计
+      /*
+        forEach（）无法在所有元素都传递给调用的函数之前终止遍历。也就是说，没有像for循环中使用的相应的break语句。如果要提前终止，
+        必须把forEach（）方法放在一个try块中，并能抛出一个异常。如果forEach（）调用的函数抛出foreach.break异常，循环会提前终止：
+        循环遍历的代码放在try中通过手动抛出异常可以结束循环，在catch中进行监控，如果所抛出的异常不是我们先前规定好的异常'__break__'
+        那就要真正的抛出异常，否则不作操作继续往下，走到return
+       */
     try {
       if (nativeForEach && obj.forEach === nativeForEach) {
         obj.forEach(iterator, context);
@@ -85,6 +92,7 @@
     if (nativeMap && obj.map === nativeMap) return obj.map(iterator, context);
     var results = [];
     each(obj, function(value, index, list) {
+        // 可见map返回的是每一次执行的结果
       results.push(iterator.call(context, value, index, list));
     });
     return results;
@@ -126,7 +134,12 @@
     if (nativeFilter && obj.filter === nativeFilter) return obj.filter(iterator, context);
     var results = [];
     each(obj, function(value, index, list) {
-      iterator.call(context, value, index, list) && results.push(value);
+        /*
+            这里注意和map的区别，map是不管iterator的调用的返回值是什么，都会原样返回
+            filter 本意就是过滤的意思，所以返回那些符合条件的，也就是iterator返回值如果是
+            假值那么就不返回
+         */
+      iterator.call(context, value, index, list) && results.push(value)
     });
     return results;
   };
@@ -142,6 +155,17 @@
 
   // Determine whether all of the elements match a truth test.
   // Delegates to JavaScript 1.6's native every if available.
+  /*
+        every 方法为数组中的每个元素执行一次 callback 函数，直到它找到一个使 callback 返回 false（表示可转换为布尔值 false 的值）的元素。
+        如果发现了一个这样的元素，every 方法将会立即返回 false。否则，callback 为每一个元素返回 true，every 就会返回 true。
+        function isBigEnough(element, index, array) {
+          return (element >= 10);
+        }
+        var passed = [12, 5, 8, 130, 44].every(isBigEnough);
+        // passed is false
+        passed = [12, 54, 18, 130, 44].every(isBigEnough);
+        // passed is true
+   */
   _.every = function(obj, iterator, context) {
     iterator = iterator || _.identity;
     if (nativeEvery && obj.every === nativeEvery) return obj.every(iterator, context);
@@ -175,24 +199,57 @@
   };
 
   // Invoke a method with arguments on every item in a collection.
+  // invoke是调用的意思
   _.invoke = function(obj, method) {
-    var args = _.rest(arguments, 2);
+    var args = _.rest(arguments, 2);// 获取到除前两个参数之外的其他参数
     return _.map(obj, function(value) {
       return (method ? value[method] : value).apply(value, args);
     });
   };
 
   // Convenience version of a common use case of map: fetching a property.
+  /*
+        var obj={
+            "a": {
+            name: "yuu"
+        },
+        "b":{
+            name:"shen"
+        },
+        c:{
+            name:"li"
+        },
+        d:[1,2,3]
+    }
+    _.pluck(obj,'name');
+    [ "Yuu","shen","li","undefined"];
+   */
+  // 返回集合中指定键名的对应值的数组
   _.pluck = function(obj, key) {
     return _.map(obj, function(value){ return value[key]; });
   };
 
   // Return the maximum item or (item-based computation).
   _.max = function(obj, iterator, context) {
+     // 如果只传递了一个参数，并且这个参数是一个数组，那么直接调用原生数学函数
     if (!iterator && _.isArray(obj)) return Math.max.apply(Math, obj);
+
     var result = {computed : -Infinity};
     each(obj, function(value, index, list) {
       var computed = iterator ? iterator.call(context, value, index, list) : value;
+
+      /*
+        请注意下边这种写法，等价于
+        if(条件){
+            执行
+        }
+        如果执行语句比较简单
+        ==>    条件 && 执行;
+        这样就显得比较简单     （-- __ --） 但是第一次见的话读代码好费劲。。。。
+        在加上 es6 箭头函数这种火星文写法可以让代码很简洁
+
+            ()=>{}
+       */
       computed >= result.computed && (result = {value : value, computed : computed});
     });
     return result.value;
@@ -210,6 +267,30 @@
   };
 
   // Sort the object's values by a criterion produced by an iterator.
+  /*
+        顾名思义是通过一种定义的规则去排序
+        下边将return语句分解来看
+        （3）return _.pluck(arr,"value");// 返回之前存储的集合的每一个原始的项
+        （2）arr = _.map(obj, iterator).sort(function(left, right) {// 可见比较的就是计算后的criteria
+          var a = left.criteria, b = right.criteria;
+          return a < b ? -1 : a > b ? 1 : 0;
+        })
+        （1）iterator = function (value, index, list) {
+              return {
+                value : value,//可见，value的作用是把当前对象的每一项暂时存储下来便于后边返回
+                criteria : iterator.call(context, value, index, list)// 这个属性的作用就是通过使用者定义的规则计算出对应的值，比如说是平方的运算等等，然后用于比较
+              };
+        }
+   */
+  /*
+        评价：整体思路非常好，就是要对一个集合通过某种规则进行比较，其中嵌套深度可能很深，那么我不对这个量直接比较，而是建立一个新的容易比较的集合，这个集合是有两个成员
+        的，一个是原始集合的每一个项，另一个是按照指定的规则进行比较的量，
+        {
+            value : 原始集合每一项
+            criteria : 按照规则计算后的对应项的值
+        }
+        这样就对这个新的集合进行排序，排序结束后，返回原始项即可；
+   */
   _.sortBy = function(obj, iterator, context) {
     return _.pluck(_.map(obj, function(value, index, list) {
       return {
@@ -276,6 +357,16 @@
   };
 
   // Return a completely flattened version of an array.
+  /*
+  flatten_.flatten(array, [shallow])
+    将一个嵌套多层的数组 array（数组） (嵌套可以是任何层数)转换为只有一层的数组。 如果你传递 shallow参数，数组将只减少一维的嵌套。
+
+    _.flatten([1, [2], [3, [[4]]]]);
+    => [1, 2, 3, 4];
+
+    _.flatten([1, [2], [3, [[4]]]], true);
+    => [1, 2, 3, [[4]]];
+   */
   _.flatten = function(array) {
     return _.reduce(array, [], function(memo, value) {
       if (_.isArray(value)) return memo.concat(_.flatten(value));
@@ -342,10 +433,29 @@
   // Generate an integer Array containing an arithmetic progression. A port of
   // the native Python range() function. See:
   // http://docs.python.org/library/functions.html#range
+  /*
+  一个用来创建整数灵活编号的列表的函数，便于each 和 map循环。如果省略start则默认为 0；step 默认为 1.返回一个从start 到stop的整数的列表，
+  用step来增加 （或减少）独占。值得注意的是，如果stop值在start前面（也就是stop值小于start值），那么值域会被认为是零长度，而不是负增长。
+  -如果你要一个负数的值域 ，请使用负数step.
+
+    _.range(10);
+    => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    _.range(1, 11);
+    => [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    _.range(0, 30, 5);
+    => [0, 5, 10, 15, 20, 25]
+    _.range(0, -10, -1);
+    => [0, -1, -2, -3, -4, -5, -6, -7, -8, -9]
+    _.range(0);
+    => []
+
+   */
   _.range = function(start, stop, step) {
     var a     = _.toArray(arguments);
     var solo  = a.length <= 1;
-    var start = solo ? 0 : a[0], stop = solo ? a[0] : a[1], step = a[2] || 1;
+    var start = solo ? 0 : a[0],
+        stop = solo ? a[0] : a[1],
+        step = a[2] || 1;
     var len   = Math.ceil((stop - start) / step);
     if (len <= 0) return [];
     var range = new Array(len);
@@ -391,6 +501,18 @@
   // Returns the first function passed as an argument to the second,
   // allowing you to adjust arguments, run code before and after, and
   // conditionally execute the original function.
+  /**
+      wrap_.wrap(function, wrapper)
+    将第一个函数 function 封装到函数 wrapper 里面, 并把函数 function 作为第一个参数传给 wrapper.
+    这样可以让 wrapper 在 function 运行之前和之后 执行代码, 调整参数然后附有条件地执行.
+
+    var hello = function(name) { return "hello: " + name; };
+    hello = _.wrap(hello, function(func) {
+    return "before, " + func("moe") + ", after";
+    });
+    hello();
+    => 'before, hello: moe, after'
+   */
   _.wrap = function(func, wrapper) {
     return function() {
       var args = [func].concat(_.toArray(arguments));
@@ -448,6 +570,10 @@
 
   // Invokes interceptor with the obj, and then returns obj.
   // The primary purpose of this method is to "tap into" a method chain, in order to perform operations on intermediate results within the chain.
+  /*
+        用 object作为参数来调用函数interceptor，然后返回object。这种方法的主要意图是作为函数链式调用 的一环, 为了对此对象执行操作并返回对象本身。
+        也就是说用这个对象执行interceptor，这个操作，然后返回对象本身
+   */
   _.tap = function(obj, interceptor) {
     interceptor(obj);
     return obj;
@@ -485,7 +611,7 @@
     // Different object sizes?
     if (aKeys.length != bKeys.length) return false;
     // Recursive comparison of contents.
-    for (var key in a) if (!_.isEqual(a[key], b[key])) return false;
+    for (var key in a) if (!_.isEqual(a[key], b[key])) return false;// 进行递归操作，深层次验证a与b是否相等
     return true;
   };
 
